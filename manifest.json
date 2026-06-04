@@ -1,0 +1,32 @@
+{
+  "manifest_version": 3,
+  "name": "EH Gallery Downloader",
+  "version": "1.0.0",
+  "description": "Download a whole e-hentai gallery as a ZIP, preferring original images and falling back to normal images.",
+  "permissions": ["tabs"],
+  "host_permissions": [
+    "*://e-hentai.org/*",
+    "*://exhentai.org/*",
+    "*://*.hath.network/*"
+  ],
+  "background": {
+    "service_worker": "src/background.js"
+  },
+  "action": {
+    "default_title": "EH Gallery Downloader",
+    "default_popup": "src/popup.html"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "*://e-hentai.org/g/*",
+        "*://e-hentai.org/s/*",
+        "*://exhentai.org/g/*",
+        "*://exhentai.org/s/*"
+      ],
+      "js": ["src/content.js"],
+      "css": ["src/content.css"],
+      "run_at": "document_idle"
+    }
+  ]
+}

@@ -1,0 +1,55 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <style>
+      body {
+        width: 280px;
+        margin: 0;
+        padding: 14px;
+        font: 13px/1.5 Arial, sans-serif;
+        background: #34353b;
+        color: #f1f1f1;
+      }
+      h1 { font-size: 14px; margin: 0 0 10px; }
+      p { margin: 6px 0; color: #bbb; }
+      button {
+        width: 100%;
+        padding: 8px;
+        margin-top: 8px;
+        background: #5c0d11;
+        color: #fff;
+        border: 0;
+        border-radius: 5px;
+        cursor: pointer;
+        font-weight: bold;
+      }
+      button:hover { background: #7a1116; }
+      input[type="text"] {
+        width: 100%;
+        box-sizing: border-box;
+        padding: 7px;
+        border: 1px solid #555;
+        border-radius: 5px;
+        background: #22232a;
+        color: #f1f1f1;
+      }
+      #hint { font-size: 11px; color: #888; }
+      .err { color: #f08a8a; }
+    </style>
+  </head>
+  <body>
+    <h1>EH Gallery Downloader</h1>
+    <div id="on-page" hidden>
+      <p>You're on a gallery/image page. Open the downloader:</p>
+      <button id="start">Download this gallery</button>
+    </div>
+    <div id="paste">
+      <p>Not on a /g or /s page. Paste a gallery URL to download:</p>
+      <input type="text" id="url" placeholder="https://e-hentai.org/g/.../.../" />
+      <button id="open">Open downloader</button>
+      <p id="hint">Accepts a /g/ gallery URL or a /s/ image URL on e-hentai.org or exhentai.org.</p>
+    </div>
+    <script src="popup.js"></script>
+  </body>
+</html>

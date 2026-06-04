@@ -1,0 +1,16 @@
+#ehdl-trigger {
+  position: fixed;
+  top: 12px;
+  right: 12px;
+  z-index: 2147483647;
+  padding: 8px 12px;
+  background: #5c0d11;
+  color: #fff;
+  border: 1px solid #7a1116;
+  border-radius: 6px;
+  cursor: pointer;
+  font: bold 12px Arial, sans-serif;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.5);
+}
+#ehdl-trigger:hover:not(:disabled) { background: #7a1116; }
+#ehdl-trigger:disabled { opacity: 0.6; cursor: default; }

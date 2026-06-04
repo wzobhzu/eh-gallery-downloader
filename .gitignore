@@ -1,0 +1,27 @@
+# Secrets / dark-side credentials — never commit
+.dark-credentials
+*.credentials
+*credentials*
+.env
+.env.*
+*.pem
+*.key
+
+# OS / editor
+Thumbs.db
+desktop.ini
+.DS_Store
+.vscode/
+.idea/
+
+# Build / deps
+node_modules/
+dist/
+*.zip
+
+# Local scratch
+scratch/
+NOTES.local.md
+
+# Playwright MCP run artifacts
+.playwright-mcp/

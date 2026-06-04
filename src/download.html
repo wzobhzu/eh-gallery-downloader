@@ -1,0 +1,76 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>EH Gallery Downloader</title>
+    <style>
+      body {
+        margin: 0;
+        padding: 28px;
+        background: #1f2024;
+        color: #f1f1f1;
+        font: 14px/1.6 Arial, sans-serif;
+      }
+      .wrap { max-width: 640px; margin: 0 auto; }
+      h1 { font-size: 18px; margin: 0 0 4px; }
+      #title { color: #9ad; word-break: break-word; margin: 0 0 18px; min-height: 20px; }
+      .row { margin: 12px 0; }
+      label { color: #ccc; }
+      input[type="number"] { width: 56px; background: #2b2c33; color: #f1f1f1; border: 1px solid #555; border-radius: 4px; padding: 3px 5px; }
+      input[type="text"] { width: 100%; box-sizing: border-box; background: #2b2c33; color: #f1f1f1; border: 1px solid #555; border-radius: 4px; padding: 7px; }
+      button {
+        padding: 10px 16px;
+        background: #5c0d11;
+        color: #fff;
+        border: 0;
+        border-radius: 6px;
+        cursor: pointer;
+        font-weight: bold;
+        font-size: 14px;
+      }
+      button:hover:not(:disabled) { background: #7a1116; }
+      button:disabled { opacity: 0.5; cursor: default; }
+      #bar { height: 12px; background: #111; border-radius: 6px; overflow: hidden; margin: 14px 0 6px; }
+      #fill { height: 100%; width: 0; background: #4a90d9; transition: width 0.15s; }
+      #status { color: #bbb; }
+      #status.ok { color: #7ed17e; }
+      #status.err { color: #f08a8a; }
+      #log { margin-top: 12px; font-size: 12px; color: #c9a; white-space: pre-wrap; }
+      .hint { font-size: 12px; color: #888; }
+      .hidden { display: none; }
+    </style>
+  </head>
+  <body>
+    <div class="wrap">
+      <h1>EH Gallery Downloader</h1>
+      <p id="title">Resolving gallery&hellip;</p>
+
+      <div id="paste" class="row hidden">
+        <label for="url">Paste a gallery URL (/g/&hellip;) or image URL (/s/&hellip;):</label>
+        <div class="row"><input type="text" id="url" placeholder="https://e-hentai.org/g/.../.../" /></div>
+        <button id="load">Load</button>
+      </div>
+
+      <div id="opts" class="row hidden">
+        <div class="row"><label><input type="checkbox" id="orig" checked /> Prefer original images <span class="hint">(originals burn far more of your image quota; uncheck to be gentler)</span></label></div>
+        <div class="row">
+          <label>Parallel: <input type="number" id="conc" min="1" max="6" value="2" /></label>
+          &nbsp;&nbsp;
+          <label>Delay (ms): <input type="number" id="delay" min="0" max="5000" value="400" /></label>
+          <span class="hint">&nbsp;Lower parallel + higher delay = less risk of a 509 / rate-limit block.</span>
+        </div>
+      </div>
+
+      <div class="row">
+        <button id="save" class="hidden">Save ZIP&hellip;</button>
+        <button id="cancel" class="hidden">Cancel</button>
+      </div>
+
+      <div id="bar" class="hidden"><div id="fill"></div></div>
+      <p id="status"></p>
+      <p id="log"></p>
+      <p class="hint">This tab runs independently &mdash; you can keep browsing or close the gallery tab and the download continues. The ZIP streams straight to disk (pick a location once; defaults to Downloads), so even a 2000-image gallery never exhausts memory and there is no download-shelf spam.</p>
+    </div>
+    <script type="module" src="download.js"></script>
+  </body>
+</html>

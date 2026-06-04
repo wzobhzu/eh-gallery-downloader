@@ -1,0 +1,23 @@
+{
+  "name": "eh-gallery-downloader",
+  "version": "0.0.0-development",
+  "private": true,
+  "type": "module",
+  "description": "Browser extension to download e-hentai galleries as ZIP (originals first, fallback to normal).",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/wzobhzu/eh-gallery-downloader.git"
+  },
+  "scripts": {
+    "build": "node scripts/release-prepare.mjs",
+    "check": "node --check src/content.js && node --check src/background.js && node --check src/popup.js && node --check src/scrape.js && node --check src/zip-stream.js && node --check src/download.js"
+  },
+  "devDependencies": {
+    "@semantic-release/commit-analyzer": "^13.0.0",
+    "@semantic-release/exec": "^7.0.3",
+    "@semantic-release/github": "^11.0.0",
+    "@semantic-release/release-notes-generator": "^14.0.0",
+    "semantic-release": "^24.2.0"
+  }
+}
