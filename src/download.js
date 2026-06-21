@@ -98,7 +98,7 @@ async function run() {
 
   const zip = new ZipStreamWriter(sink.write);
   const width = String(links.length).length;
-  const failures = [];
+  const total = links.length;
   let origCount = 0;
   let saved = 0;
   let writeChain = Promise.resolve();
@@ -110,43 +110,59 @@ async function run() {
     return p;
   };
 
-  await pool(
-    links,
-    limit,
-    async (sUrl) => {
-      const page = pageNumOf(sUrl);
-      const img = await fetchImage(sUrl, preferOriginal, state);
-      if (String(img.source).startsWith("original")) origCount++;
-      await serialAdd(`${String(page).padStart(width, "0")}.${img.ext}`, img.data);
-    },
-    (done, fail) => {
-      if (fail) failures.push(fail);
-      else saved++;
-      $("fill").style.width = Math.round((done / links.length) * 100) + "%";
-      setStatus(`Downloading ${done}/${links.length}… (${saved} saved)`);
-    },
-    state,
-    delay
-  );
+  // Pages that still fail are retried in later rounds — transient node/network
+  // errors are common on e-hentai. A 509 sets state.quotaHit and stops the loop;
+  // retrying then would only prolong the block.
+  const MAX_ROUNDS = 3; // 1 initial pass + up to 2 retries
+  const RETRY_BACKOFF = 2000;
+  const remaining = new Set(links);
+
+  for (let round = 1; round <= MAX_ROUNDS; round++) {
+    if (!remaining.size || state.cancelled || state.quotaHit) break;
+    if (round > 1) {
+      setStatus(`Retry ${round - 1}: ${remaining.size} page(s) left…`);
+      await new Promise((r) => setTimeout(r, RETRY_BACKOFF));
+      if (state.cancelled || state.quotaHit) break;
+    }
+    await pool(
+      [...remaining],
+      limit,
+      async (sUrl) => {
+        const page = pageNumOf(sUrl);
+        const img = await fetchImage(sUrl, preferOriginal, state);
+        if (String(img.source).startsWith("original")) origCount++;
+        await serialAdd(`${String(page).padStart(width, "0")}.${img.ext}`, img.data);
+        remaining.delete(sUrl); // succeeded -> excluded from later rounds
+        saved++;
+      },
+      () => {
+        $("fill").style.width = Math.round((saved / total) * 100) + "%";
+        setStatus(`Downloading ${saved}/${total}…${round > 1 ? ` (retry ${round - 1})` : ""}`);
+      },
+      state,
+      delay
+    );
+  }
 
   await writeChain;
   await zip.close();
   await sink.done();
 
+  const failedPages = [...remaining].map(pageNumOf).sort((a, b) => a - b);
+
   if (state.quotaHit) {
     setStatus(
-      `Stopped at ${saved} images: e-hentai image limit reached (HTTP 509). The partial ZIP was saved. Wait a while, lower parallelism / raise the delay, or uncheck "prefer originals" (originals use far more quota).`,
+      `Stopped at ${saved}/${total}: e-hentai image limit reached (HTTP 509). The partial ZIP was saved. Wait a while, lower parallelism / raise the delay, or uncheck "prefer originals" (originals use far more quota).`,
       "err"
     );
   } else if (state.cancelled) {
-    setStatus(`Cancelled. Partial ZIP saved with ${saved} images.`, "err");
+    setStatus(`Cancelled. Partial ZIP saved with ${saved}/${total} images.`, "err");
   } else {
-    let msg = `Done: ${saved} images zipped (${origCount} original, ${saved - origCount} normal).`;
-    if (failures.length) {
-      const pages = failures.map((f) => pageNumOf(links[f.index])).sort((a, b) => a - b);
-      msg += ` ${failures.length} failed: page ${pages.join(", ")}.`;
+    let msg = `Done: ${saved}/${total} images zipped (${origCount} original, ${saved - origCount} normal).`;
+    if (failedPages.length) {
+      msg += ` ${failedPages.length} still failed after retries: page ${failedPages.join(", ")}. Re-run to try them again.`;
     }
-    setStatus(msg, "ok");
+    setStatus(msg, failedPages.length ? "err" : "ok");
   }
   $("cancel").classList.add("hidden");
 }

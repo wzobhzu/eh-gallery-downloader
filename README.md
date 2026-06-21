@@ -78,7 +78,11 @@ and it is also why there is no per-file download-shelf spam.
   400 ms). On **HTTP 509** the downloader stops and saves the partial ZIP rather
   than hammering. The extension does **not** spoof your IP or evade limits — it
   only behaves politely. For two big galleries, run them one at a time.
-- **Re-running** a gallery produces a fresh ZIP; failed pages are simply retried.
+- **Retries**: after the first pass, pages that failed (transient node/network
+  errors) are automatically retried for up to 2 more rounds, with a short
+  backoff, and merged into the same ZIP. Genuinely missing pages are reported at
+  the end; re-running the gallery tries them once more. Retries are skipped on a
+  509 (quota) — the job stops instead of prolonging the block.
 
 ## License
 
