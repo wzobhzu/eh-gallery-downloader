@@ -26,8 +26,5 @@
       "js": ["src/listing.js"],
       "run_at": "document_idle"
     }
-  ],
-  "web_accessible_resources": [
-    { "resources": ["src/manager.html"], "matches": ["*://e-hentai.org/*", "*://exhentai.org/*"] }
   ]
 }

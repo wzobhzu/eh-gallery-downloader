@@ -105,7 +105,7 @@ async function tryBytes(url, state) {
   // hammering, which only prolongs the temporary block.
   if (r.status === 509) {
     state.quotaHit = true;
-    state.cancelled = true;
+    if (!state.pauseOn509) state.cancelled = true;
     return null;
   }
   if (!r.ok) return null;

@@ -15,7 +15,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
         await chrome.storage.local.set({ "ehdl.inbox": cur });
       }
       const tabs = await chrome.tabs.query({ url: managerUrl + "*" });
-      if (tabs[0]) chrome.tabs.update(tabs[0].id, { active: true });
+      if (tabs[0]) { chrome.tabs.update(tabs[0].id, { active: true }); chrome.windows.update(tabs[0].windowId, { focused: true }); }
       else chrome.tabs.create({ url: managerUrl });
     };
     enqueue().then(() => sendResponse({ ok: true }));

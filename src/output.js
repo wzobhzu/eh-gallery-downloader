@@ -63,3 +63,21 @@ export async function ensurePermission(dirHandle) {
   if ((await dirHandle.queryPermission(opts)) === "granted") return true;
   return (await dirHandle.requestPermission(opts)) === "granted";
 }
+
+// Rename a just-written file within the same directory. Uses FileSystemFileHandle.move
+// (Chromium 110+); falls back to copy+remove where move is unavailable.
+export async function renameFile(dirHandle, fromName, toName) {
+  const fh = await dirHandle.getFileHandle(fromName);
+  if (typeof fh.move === "function") { await fh.move(toName); return; }
+  const src = await fh.getFile();
+  const dst = await dirHandle.getFileHandle(toName, { create: true });
+  const w = await dst.createWritable();
+  await src.stream().pipeTo(w);
+  await dirHandle.removeEntry(fromName);
+}
+
+// Query-only permission check (no user gesture) for use during boot/resume.
+export async function hasPermission(dirHandle) {
+  if (!dirHandle) return false;
+  return (await dirHandle.queryPermission({ mode: "readwrite" })) === "granted";
+}
