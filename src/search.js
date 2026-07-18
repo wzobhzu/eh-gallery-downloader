@@ -24,10 +24,18 @@ export function parseSearchGalleries(doc, origin) {
 // any next=-bearing anchor, then to constructing next=<smallest gid on page>.
 export function nextCursorUrl(doc, currentUrl) {
   const nav = doc.querySelector("#unext, #dnext");
-  const navHref = nav && nav.getAttribute("href");
-  if (navHref && /[?&]next=\d+/.test(navHref)) {
-    try { return new URL(navHref, currentUrl).href; } catch { /* ignore */ }
+  if (nav) {
+    // A live <a id="unext"> with a next= href means there IS a next page. On the
+    // last results page these render as <span> (no href) — the authoritative
+    // end-of-results signal — so return null instead of fabricating a next URL.
+    const href = nav.tagName === "A" ? nav.getAttribute("href") : null;
+    if (href && /[?&]next=\d+/.test(href)) {
+      try { return new URL(href, currentUrl).href; } catch { /* ignore */ }
+    }
+    return null;
   }
+  // #unext/#dnext absent (non-standard layout only): fall back to any next=-bearing
+  // "Next" anchor, then to next=<smallest gid on page>.
   for (const a of doc.querySelectorAll("a[href]")) {
     const href = a.getAttribute("href") || "";
     if (/[?&]next=\d+/.test(href) && /(next\s*&gt;|next|›|»|>)/i.test(a.textContent || "")) {
@@ -49,13 +57,14 @@ export function nextCursorUrl(doc, currentUrl) {
 // (logged if hit — no silent truncation) or when a page yields nothing new.
 export async function collectGalleriesFromSearch(searchUrl, state, onPage, opts = {}) {
   const maxPages = opts.maxPages || 200;
+  const doFetch = opts.fetchDoc || fetchDoc; // injectable for tests
   const origin = new URL(searchUrl).origin;
   const seen = new Set();
   const all = [];
   let url = searchUrl;
   let page = 0;
   while (url && page < maxPages && !state.cancelled) {
-    const doc = await fetchDoc(url);
+    const doc = await doFetch(url);
     const before = all.length;
     for (const g of parseSearchGalleries(doc, origin)) {
       const gid = g.match(GLINK)[1];
