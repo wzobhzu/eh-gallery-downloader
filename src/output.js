@@ -64,16 +64,12 @@ export async function ensurePermission(dirHandle) {
   return (await dirHandle.requestPermission(opts)) === "granted";
 }
 
-// Rename a just-written file within the same directory. Uses FileSystemFileHandle.move
-// (Chromium 110+); falls back to copy+remove where move is unavailable.
+// Atomic rename within the same directory. Requires Chromium 110+ (declared via
+// manifest minimum_chrome_version) so FileSystemFileHandle.move is always present —
+// no non-atomic copy fallback that could leave a truncated final-named file.
 export async function renameFile(dirHandle, fromName, toName) {
   const fh = await dirHandle.getFileHandle(fromName);
-  if (typeof fh.move === "function") { await fh.move(toName); return; }
-  const src = await fh.getFile();
-  const dst = await dirHandle.getFileHandle(toName, { create: true });
-  const w = await dst.createWritable();
-  await src.stream().pipeTo(w);
-  await dirHandle.removeEntry(fromName);
+  await fh.move(toName);
 }
 
 // Query-only permission check (no user gesture) for use during boot/resume.

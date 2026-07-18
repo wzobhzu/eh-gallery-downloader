@@ -3,6 +3,7 @@
   "name": "EH Gallery Downloader",
   "version": "1.0.0",
   "description": "Download e-hentai galleries as ZIP in bulk from search results, torrent-first with image fallback.",
+  "minimum_chrome_version": "110",
   "permissions": ["tabs", "storage"],
   "host_permissions": [
     "*://e-hentai.org/*",
