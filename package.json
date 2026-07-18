@@ -11,13 +11,15 @@
   },
   "scripts": {
     "build": "node scripts/release-prepare.mjs",
-    "check": "node --check src/content.js && node --check src/background.js && node --check src/popup.js && node --check src/scrape.js && node --check src/zip-stream.js && node --check src/download.js"
+    "check": "node --check src/content.js && node --check src/background.js && node --check src/popup.js && node --check src/scrape.js && node --check src/zip-stream.js && node --check src/download.js && node --check src/search.js && node --check src/torrents.js && node --check src/qbittorrent.js && node --check src/output.js && node --check src/queue.js && node --check src/manager.js",
+    "test": "node --test"
   },
   "devDependencies": {
     "@semantic-release/commit-analyzer": "^13.0.0",
     "@semantic-release/exec": "^7.0.3",
     "@semantic-release/github": "^11.0.0",
     "@semantic-release/release-notes-generator": "^14.0.0",
+    "linkedom": "^0.18.0",
     "semantic-release": "^24.2.0"
   }
 }
