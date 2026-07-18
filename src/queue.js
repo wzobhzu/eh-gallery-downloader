@@ -27,6 +27,7 @@ export class Job {
   }
 
   _g(gid) { return this.data.galleries.find((g) => g.gid === String(gid)); }
+  get(gid) { return this._g(gid); }
   async setRoute(gid, route) { this._g(gid).route = route; await this.save(); }
   async setStatus(gid, status, extra) { Object.assign(this._g(gid), { status }, extra || {}); await this.save(); }
   async markImageProgress(gid, savedPages, failedPages) { const g = this._g(gid); g.image.savedPages = savedPages; g.image.failedPages = failedPages; await this.save(); }

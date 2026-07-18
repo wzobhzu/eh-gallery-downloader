@@ -90,10 +90,20 @@ and the gallery has a live-seeded torrent. If so, it hands the personalized
   route does **not** consume your account/IP image-view limit.
 - **Original quality**, same as the "Download original" link.
 
-Otherwise — qBittorrent isn't reachable, the gallery has no live-seeded
-torrent, or the torrent stalls with no progress — the manager falls back to
-the same fetch-and-stream-ZIP path used for single-gallery downloads. This
-guarantees every gallery eventually completes by one route or the other.
+Torrents are added to qBittorrent **all at once and download in parallel in
+the background** — the manager doesn't wait on any single one before moving
+to the next gallery, so image-route galleries and every torrent progress
+concurrently. A torrent with no seeders (or that makes no progress for
+~5 minutes) is automatically pulled from qBittorrent and falls back to image
+fetch. Otherwise — qBittorrent isn't reachable, or the gallery has no
+live-seeded torrent — the manager falls back to the same fetch-and-stream-ZIP
+path used for single-gallery downloads. This guarantees every gallery
+eventually completes by one route or the other.
+
+Set the **"Torrent save folder"** field to the same folder you pick below for
+ZIPs to keep every gallery together — torrent galleries save there under a
+`<title>` subfolder, matching the ZIP naming. Leave it blank to use
+qBittorrent's own default save path.
 
 #### One-time qBittorrent setup
 

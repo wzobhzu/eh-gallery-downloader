@@ -1,5 +1,5 @@
 import { collectGalleriesFromSearch } from "./search.js";
-import { resolveGallery, collectImageLinks, fetchImage, pool, pageNumOf, sanitize } from "./scrape.js";
+import { resolveGallery, collectImageLinks, fetchImage, pool, pageNumOf, sanitize, fetchDoc } from "./scrape.js";
 import { ZipStreamWriter } from "./zip-stream.js";
 import { pickOutputDir, zipSinkFor, fileExists, persistDir, restoreDir, ensurePermission, renameFile } from "./output.js";
 import { Job } from "./queue.js";
@@ -41,7 +41,7 @@ chrome.storage.onChanged.addListener((changes, area) => {
   if (area === "local" && changes["ehdl.inbox"] && (changes["ehdl.inbox"].newValue || []).length) ingestInbox();
 });
 
-function settingsFromUI(){ return { preferOriginal: $("orig").checked, imgConcurrency: +$("conc").value, galleryConcurrency: +$("gconc").value, delayMs: +$("delay").value }; }
+function settingsFromUI(){ return { preferOriginal: $("orig").checked, imgConcurrency: +$("conc").value, galleryConcurrency: +$("gconc").value, delayMs: +$("delay").value, qbSavePath: $("qbpath").value.trim() }; }
 
 $("pick").onclick = async () => { dir = await pickOutputDir(); await persistDir(dir); $("start").disabled = false; setStatus("Output folder set."); };
 
@@ -50,6 +50,7 @@ $("start").onclick = async () => {
   if (!(await ensurePermission(dir))) { setStatus("Folder write permission denied.", "err"); return; }
   const urls = $("urls").value.split(/\s+/).map((s)=>s.trim()).filter(Boolean);
   state.userCancelled=false; state.cancelled=false; state.paused=false; state.manualPause=false; state.quotaHit=false;
+  await storage.set("ehdl.qbpath", $("qbpath").value.trim());
 
   if (urls.length) {
     // Additive: append (dedup) to the existing/loaded job, or create one — never wipes prior progress.
@@ -68,10 +69,35 @@ $("start").onclick = async () => {
   } // else: resume the boot-loaded job as-is
 
   usedNames.clear();
-  for (const gg of job.data.galleries) if (gg.zipName) usedNames.add(gg.zipName);  // reserve already-assigned names so a distinct gallery can never resolve to a sibling's ZIP
+  for (const gg of job.data.galleries) if (gg.zipName) usedNames.add(gg.zipName);
   renderRows();
   $("start").classList.add("hidden"); showPauseBtn(); $("cancel").classList.remove("hidden");
-  await pool(await job.pending(), job.data.settings.galleryConcurrency, (g)=>processGallery(g), ()=>{}, state, 0);
+
+  const pend = await job.pending();
+  const imageWork = [];          // dynamic queue of galleries to image-fetch (grows if a torrent falls back)
+  const torrentGids = new Set(); // galleries handed to qBittorrent, monitored in the background
+
+  // Phase 1: route every gallery. Torrent -> add to qBittorrent NOW and move on (non-blocking);
+  // image (or torrent that couldn't be added) -> the image queue.
+  await pool(pend, 4, async (g) => {
+    if (state.userCancelled) return;
+    await routeGallery(g);
+    if (g.route === "torrent") {
+      const ok = await addTorrent(g);
+      if (ok) torrentGids.add(g.gid);
+      else { await job.setRoute(g.gid, "image"); updateRow(g); imageWork.push(g); }
+    } else {
+      imageWork.push(g);
+    }
+  }, ()=>{}, state, 0);
+
+  // Phase 2: image workers + torrent monitor run concurrently. The monitor may push
+  // stalled/seedless torrent galleries into imageWork, which the workers then drain.
+  let torrentsActive = torrentGids.size > 0;
+  const imageDone = runImageWorkers(imageWork, () => torrentsActive, job.data.settings.galleryConcurrency);
+  const monitorDone = monitorTorrents(torrentGids, imageWork).finally(() => { torrentsActive = false; });
+  await Promise.all([imageDone, monitorDone]);
+
   const failedCount = job.data.galleries.filter((g)=>g.status === "failed").length;
   setStatus(
     state.userCancelled ? "Cancelled — partial galleries left as .part; press Start to resume."
@@ -81,22 +107,7 @@ $("start").onclick = async () => {
   $("pause").classList.add("hidden"); $("resume").classList.add("hidden"); $("cancel").classList.add("hidden"); $("start").classList.remove("hidden");
 };
 
-async function processGallery(g) {
-  if (state.userCancelled) return;
-  await routeGallery(g);
-  if (g.route === "torrent") {
-    const ok = await torrentRoute(g);
-    if (!ok && !state.userCancelled) {
-      try { if (g._torrent) await qb.deleteTorrent(g._torrent.infohash, true); } catch { /* best-effort cleanup */ }
-      await job.setRoute(g.gid, "image"); updateRow(g); await imageRoute(g);
-    }
-  } else {
-    await imageRoute(g);
-  }
-}
-
-// Route to torrent when qBittorrent is reachable AND the gallery has a live-seeded
-// torrent; otherwise (or if the torrent stalls) fall back to image fetch.
+// Decide the route for one gallery and, for torrent, stash the chosen torrent on g._torrent.
 async function routeGallery(g) {
   if (qbOk) {
     try {
@@ -107,29 +118,78 @@ async function routeGallery(g) {
   await job.setRoute(g.gid, "image"); updateRow(g);
 }
 
-// Fetch the personalized .torrent (with cookies) and hand it to qBittorrent, then
-// poll its progress. Returns true when complete (or cancelled); false to signal the
-// caller to fall back to image fetch (couldn't fetch/add, or stalled with no seeds).
-async function torrentRoute(g) {
-  await job.setStatus(g.gid, "downloading"); updateRow(g);
+// Non-blocking: fetch the personalized .torrent and hand it to qBittorrent, then return
+// immediately (qBittorrent downloads it in the background). Returns false if it could not
+// be fetched/added, so the caller falls back to image fetch.
+async function addTorrent(g) {
+  let title = g.title;
+  if (!title) {
+    try {
+      const { galleryUrl } = await resolveGallery(g.galleryUrl);
+      const doc = await fetchDoc(galleryUrl);
+      title = ((doc.querySelector("#gn") || doc.querySelector("#gj") || {}).textContent || "").trim() || g.gid;
+    } catch { title = g.gid; }
+  }
+  await job.setStatus(g.gid, "downloading", { title }); updateRow(g);
   const t = g._torrent;
   let bytes;
   try { bytes = new Uint8Array(await (await fetch(t.torrentUrl, { credentials: "include" })).arrayBuffer()); }
   catch { return false; }
-  const folder = sanitize(g.title || g.gid);
-  try { await qb.addTorrent(bytes, { savepath: folder, category: "eh-bulk", rename: folder }); }
+  const baseDir = job.data.settings.qbSavePath ? job.data.settings.qbSavePath.replace(/[\\/]+$/, "") + "/" : "";
+  const savepath = baseDir + sanitize(title || g.gid);
+  try { await qb.addTorrent(bytes, { savepath, category: "eh-bulk" }); }
   catch { return false; }
-  const STALL_MS = 3 * 60 * 1000; let stalledSince = 0;
-  for (;;) {
-    if (state.userCancelled) return true;
-    await sleep(4000);
-    let info;
-    try { [info] = await qb.info(t.infohash); } catch { continue; }
-    if (!info) continue;
-    updateRowProgress(g, Math.round((info.progress || 0) * 100), 100);
-    if ((info.progress || 0) >= 1) { await job.setStatus(g.gid, "done"); updateRow(g); return true; }
-    if (qb.stalled(info)) { stalledSince = stalledSince || Date.now(); if (Date.now() - stalledSince > STALL_MS) return false; }
-    else stalledSince = 0;
+  return true;
+}
+
+// Image-route workers: `concurrency` workers drain the shared `queue`, waiting while
+// `moreComing()` is true (torrents may still fall back into the queue).
+function runImageWorkers(queue, moreComing, concurrency) {
+  async function worker() {
+    for (;;) {
+      if (state.userCancelled) return;
+      if (queue.length === 0) {
+        if (!moreComing()) return;
+        await sleep(1000); continue;
+      }
+      const g = queue.shift();
+      if (g) await imageRoute(g);
+    }
+  }
+  return Promise.all(Array.from({ length: Math.max(1, concurrency) }, worker));
+}
+
+// Background torrent monitor: polls qBittorrent, marks each gallery done at 100%, and
+// re-routes a torrent to image fetch if it is seedless-stalled or makes no progress for
+// too long (so a 1-seed crawler never blocks the run).
+async function monitorTorrents(torrentGids, imageWork) {
+  if (!torrentGids.size) return;
+  const pending = new Set(torrentGids);
+  const lastProg = {}, stallSince = {};
+  const NO_PROGRESS_MS = 5 * 60 * 1000;
+  while (pending.size && !state.userCancelled) {
+    await sleep(5000);
+    let infos;
+    try { infos = await qb.info(); } catch { continue; }
+    const byHash = {};
+    for (const i of infos) byHash[i.hash] = i;
+    for (const gid of [...pending]) {
+      const g = job.get(gid);
+      const info = g && g._torrent ? byHash[g._torrent.infohash] : null;
+      if (!info) continue;
+      const prog = info.progress || 0;
+      updateRowProgress(g, Math.round(prog * 100), 100);
+      if (prog >= 1) { await job.setStatus(gid, "done"); updateRow(g); pending.delete(gid); continue; }
+      if (prog !== lastProg[gid]) { lastProg[gid] = prog; stallSince[gid] = Date.now(); }
+      const seedlessStalled = (info.num_seeds || 0) === 0 && info.state === "stalledDL";
+      const noProgressTooLong = Date.now() - (stallSince[gid] || Date.now()) > NO_PROGRESS_MS;
+      if (seedlessStalled || noProgressTooLong) {
+        try { await qb.deleteTorrent(g._torrent.infohash, true); } catch { /* best effort */ }
+        await job.setRoute(gid, "image"); updateRow(g);
+        imageWork.push(g);
+        pending.delete(gid);
+      }
+    }
   }
 }
 
@@ -199,6 +259,7 @@ $("cancel").onclick=()=>{ gateCancel(state, pauseDeps); setStatus("Cancelling...
 
 (async function boot(){
   await ingestInbox();
+  $("qbpath").value = (await storage.get("ehdl.qbpath")) || "";
   dir = await restoreDir();
   if (dir) $("start").disabled=false;   // enable even if permission reverted to 'prompt' after a restart; Start's click drives requestPermission
   qbOk = await qb.available();
