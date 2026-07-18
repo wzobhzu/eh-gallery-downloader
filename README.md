@@ -116,10 +116,12 @@ In qBittorrent: **Options -> Web UI**:
    start the Web UI without one set, even with the localhost bypass enabled.**
 
 `http://127.0.0.1:8080/*` is already declared in the extension's
-`host_permissions`; nothing else to configure on the extension side. Torrent
-downloads land in qBittorrent's own save path — separate from the folder you
-pick for ZIPs in the manager. If qBittorrent isn't reachable, the manager just
-uses image fetch for every gallery.
+`host_permissions`; nothing else to configure on the extension side. By
+default torrent downloads land in qBittorrent's own save path (separate from
+the ZIP folder). Set the manager's **Torrent save folder** field to the same
+folder you pick for ZIPs to keep every gallery together — torrent galleries
+are then saved there under a `<title>` subfolder. If qBittorrent isn't
+reachable, the manager just uses image fetch for every gallery.
 
 ### Handling the image-view limit (HTTP 509)
 

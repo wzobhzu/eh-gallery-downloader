@@ -79,7 +79,7 @@ $("start").onclick = async () => {
 
   // Phase 1: route every gallery. Torrent -> add to qBittorrent NOW and move on (non-blocking);
   // image (or torrent that couldn't be added) -> the image queue.
-  await pool(pend, 4, async (g) => {
+  await pool(pend, Math.max(1, job.data.settings.galleryConcurrency), async (g) => {
     if (state.userCancelled) return;
     await routeGallery(g);
     if (g.route === "torrent") {
@@ -135,7 +135,8 @@ async function addTorrent(g) {
   let bytes;
   try { bytes = new Uint8Array(await (await fetch(t.torrentUrl, { credentials: "include" })).arrayBuffer()); }
   catch { return false; }
-  const baseDir = job.data.settings.qbSavePath ? job.data.settings.qbSavePath.replace(/[\\/]+$/, "") + "/" : "";
+  const raw = job.data.settings.qbSavePath;
+  const baseDir = raw ? raw.replace(/[\\/]+$/, "") + (raw.includes("\\") ? "\\" : "/") : "";
   const savepath = baseDir + sanitize(title || g.gid);
   try { await qb.addTorrent(bytes, { savepath, category: "eh-bulk" }); }
   catch { return false; }
@@ -153,20 +154,28 @@ function runImageWorkers(queue, moreComing, concurrency) {
         await sleep(1000); continue;
       }
       const g = queue.shift();
-      if (g) await imageRoute(g);
+      if (!g) continue;
+      try { await imageRoute(g); }
+      catch (e) { try { await job.setStatus(g.gid, "failed"); updateRow(g); } catch { /* ignore */ } }
     }
   }
   return Promise.all(Array.from({ length: Math.max(1, concurrency) }, worker));
 }
 
 // Background torrent monitor: polls qBittorrent, marks each gallery done at 100%, and
-// re-routes a torrent to image fetch if it is seedless-stalled or makes no progress for
-// too long (so a 1-seed crawler never blocks the run).
+// re-routes to image fetch a torrent that (a) is seedless-stalled for 3+ min, (b) makes
+// no progress for 5+ min, or (c) has vanished from qBittorrent (deleted externally).
 async function monitorTorrents(torrentGids, imageWork) {
   if (!torrentGids.size) return;
   const pending = new Set(torrentGids);
-  const lastProg = {}, stallSince = {};
+  const lastProg = {}, stallSince = {}, seedlessSince = {}, missCount = {};
   const NO_PROGRESS_MS = 5 * 60 * 1000;
+  const SEEDLESS_MS = 3 * 60 * 1000;
+  const MAX_MISSES = 24; // ~2 min at 5s: torrent no longer in qBittorrent at all
+  const toImage = async (gid, g, del) => {
+    if (del) { try { await qb.deleteTorrent(g._torrent.infohash, true); } catch { /* best effort */ } }
+    await job.setRoute(gid, "image"); updateRow(g); imageWork.push(g); pending.delete(gid);
+  };
   while (pending.size && !state.userCancelled) {
     await sleep(5000);
     let infos;
@@ -176,19 +185,17 @@ async function monitorTorrents(torrentGids, imageWork) {
     for (const gid of [...pending]) {
       const g = job.get(gid);
       const info = g && g._torrent ? byHash[g._torrent.infohash] : null;
-      if (!info) continue;
+      if (!info) { missCount[gid] = (missCount[gid] || 0) + 1; if (missCount[gid] >= MAX_MISSES) await toImage(gid, g, false); continue; }
+      missCount[gid] = 0;
       const prog = info.progress || 0;
       updateRowProgress(g, Math.round(prog * 100), 100);
       if (prog >= 1) { await job.setStatus(gid, "done"); updateRow(g); pending.delete(gid); continue; }
       if (prog !== lastProg[gid]) { lastProg[gid] = prog; stallSince[gid] = Date.now(); }
-      const seedlessStalled = (info.num_seeds || 0) === 0 && info.state === "stalledDL";
+      if ((info.num_seeds || 0) === 0 && info.state === "stalledDL") { if (!seedlessSince[gid]) seedlessSince[gid] = Date.now(); }
+      else seedlessSince[gid] = 0;
+      const seedlessTooLong = seedlessSince[gid] && Date.now() - seedlessSince[gid] > SEEDLESS_MS;
       const noProgressTooLong = Date.now() - (stallSince[gid] || Date.now()) > NO_PROGRESS_MS;
-      if (seedlessStalled || noProgressTooLong) {
-        try { await qb.deleteTorrent(g._torrent.infohash, true); } catch { /* best effort */ }
-        await job.setRoute(gid, "image"); updateRow(g);
-        imageWork.push(g);
-        pending.delete(gid);
-      }
+      if (seedlessTooLong || noProgressTooLong) await toImage(gid, g, true);
     }
   }
 }
