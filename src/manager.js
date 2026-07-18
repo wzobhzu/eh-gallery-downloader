@@ -4,11 +4,15 @@ import { ZipStreamWriter } from "./zip-stream.js";
 import { pickOutputDir, zipSinkFor, fileExists, persistDir, restoreDir, ensurePermission, hasPermission, renameFile } from "./output.js";
 import { Job } from "./queue.js";
 import { isBlocked, on509, manualPause, resume as gateResume, cancel as gateCancel } from "./pause.js";
+import { getGalleryTorrents, pickBestTorrent } from "./torrents.js";
+import { QbClient } from "./qbittorrent.js";
 
 const $ = (id) => document.getElementById(id);
 const storage = { async get(k){ return (await chrome.storage.local.get(k))[k]; }, async set(k,v){ await chrome.storage.local.set({ [k]: v }); } };
 const state = { nw:false, cancelled:false, quotaHit:false, paused:false, manualPause:false, userCancelled:false, pauseOn509:true, _iv:null };
 let dir = null, job = null;
+const qb = new QbClient({});
+let qbOk = false;
 const COOLDOWN_MS = 20 * 60 * 1000;
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -73,10 +77,52 @@ $("start").onclick = async () => {
 
 async function processGallery(g) {
   if (state.userCancelled) return;
-  await routeGallery(g);            // sets g.route (torrent path added in Task 7)
-  if (g.route === "image") await imageRoute(g);
+  await routeGallery(g);
+  if (g.route === "torrent") {
+    const ok = await torrentRoute(g);
+    if (!ok && !state.userCancelled) { await job.setRoute(g.gid, "image"); updateRow(g); await imageRoute(g); }
+  } else {
+    await imageRoute(g);
+  }
 }
-async function routeGallery(g) { await job.setRoute(g.gid, "image"); updateRow(g); }
+
+// Route to torrent when qBittorrent is reachable AND the gallery has a live-seeded
+// torrent; otherwise (or if the torrent stalls) fall back to image fetch.
+async function routeGallery(g) {
+  if (qbOk) {
+    try {
+      const best = pickBestTorrent(await getGalleryTorrents(g.galleryUrl));
+      if (best) { await job.setRoute(g.gid, "torrent"); g._torrent = best; updateRow(g); return; }
+    } catch { /* fall through to image */ }
+  }
+  await job.setRoute(g.gid, "image"); updateRow(g);
+}
+
+// Fetch the personalized .torrent (with cookies) and hand it to qBittorrent, then
+// poll its progress. Returns true when complete (or cancelled); false to signal the
+// caller to fall back to image fetch (couldn't fetch/add, or stalled with no seeds).
+async function torrentRoute(g) {
+  await job.setStatus(g.gid, "downloading"); updateRow(g);
+  const t = g._torrent;
+  let bytes;
+  try { bytes = new Uint8Array(await (await fetch(t.torrentUrl, { credentials: "include" })).arrayBuffer()); }
+  catch { return false; }
+  const folder = sanitize(g.title || g.gid);
+  try { await qb.addTorrent(bytes, { savepath: folder, category: "eh-bulk", rename: folder }); }
+  catch { return false; }
+  const STALL_MS = 3 * 60 * 1000; let stalledSince = 0;
+  for (;;) {
+    if (state.userCancelled) return true;
+    await sleep(4000);
+    let info;
+    try { [info] = await qb.info(t.infohash); } catch { continue; }
+    if (!info) continue;
+    updateRowProgress(g, Math.round((info.progress || 0) * 100), 100);
+    if ((info.progress || 0) >= 1) { await job.setStatus(g.gid, "done"); updateRow(g); return true; }
+    if (qb.stalled(info)) { stalledSince = stalledSince || Date.now(); if (Date.now() - stalledSince > STALL_MS) return false; }
+    else stalledSince = 0;
+  }
+}
 
 // One image page, resilient to 509: waits out the global cooldown and retries the
 // SAME page. Uses state.quotaHit, which pause.js keeps true for the whole pause, so
@@ -144,6 +190,9 @@ $("cancel").onclick=()=>{ gateCancel(state, pauseDeps); setStatus("Cancelling...
   await ingestInbox();
   dir = await restoreDir();
   if (dir && await hasPermission(dir)) $("start").disabled=false;
+  qbOk = await qb.available();
+  const qbMsg = qbOk ? "" : " qBittorrent not reachable (127.0.0.1:8080) — torrent route disabled; image fetch used for all galleries.";
   const j = new Job(storage);
-  if (await j.load()){ job=j; renderRows(); setStatus("Previous job loaded — press Start to resume pending galleries (folder permission may re-prompt)."); }
+  if (await j.load()){ job=j; renderRows(); setStatus("Previous job loaded — press Start to resume pending galleries (folder permission may re-prompt)." + qbMsg, qbOk ? "" : "warn"); }
+  else if (qbMsg) setStatus(qbMsg.trim(), "warn");
 })();
