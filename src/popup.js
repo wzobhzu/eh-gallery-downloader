@@ -30,3 +30,7 @@ $("open").addEventListener("click", () => {
   }
   openDownloader(raw);
 });
+
+document.getElementById("bulk").addEventListener("click", () => {
+  chrome.runtime.sendMessage({ type: "openManager" }, () => { void chrome.runtime.lastError; window.close(); });
+});

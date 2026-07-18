@@ -2,31 +2,32 @@
   "manifest_version": 3,
   "name": "EH Gallery Downloader",
   "version": "1.0.0",
-  "description": "Download a whole e-hentai gallery as a ZIP, preferring original images and falling back to normal images.",
-  "permissions": ["tabs"],
+  "description": "Download e-hentai galleries as ZIP in bulk from search results, torrent-first with image fallback.",
+  "permissions": ["tabs", "storage"],
   "host_permissions": [
     "*://e-hentai.org/*",
     "*://exhentai.org/*",
-    "*://*.hath.network/*"
+    "*://*.hath.network/*",
+    "*://ehtracker.org/*",
+    "http://127.0.0.1:8080/*",
+    "http://localhost:8080/*"
   ],
-  "background": {
-    "service_worker": "src/background.js"
-  },
-  "action": {
-    "default_title": "EH Gallery Downloader",
-    "default_popup": "src/popup.html"
-  },
+  "background": { "service_worker": "src/background.js" },
+  "action": { "default_title": "EH Gallery Downloader", "default_popup": "src/popup.html" },
   "content_scripts": [
     {
-      "matches": [
-        "*://e-hentai.org/g/*",
-        "*://e-hentai.org/s/*",
-        "*://exhentai.org/g/*",
-        "*://exhentai.org/s/*"
-      ],
+      "matches": ["*://e-hentai.org/g/*", "*://e-hentai.org/s/*", "*://exhentai.org/g/*", "*://exhentai.org/s/*"],
       "js": ["src/content.js"],
       "css": ["src/content.css"],
       "run_at": "document_idle"
+    },
+    {
+      "matches": ["*://e-hentai.org/*", "*://exhentai.org/*"],
+      "js": ["src/listing.js"],
+      "run_at": "document_idle"
     }
+  ],
+  "web_accessible_resources": [
+    { "resources": ["src/manager.html"], "matches": ["*://e-hentai.org/*", "*://exhentai.org/*"] }
   ]
 }

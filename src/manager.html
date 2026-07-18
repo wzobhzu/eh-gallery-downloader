@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>EH Bulk Downloader</title>
+    <link rel="stylesheet" href="content.css" />
+    <style>
+      body { margin:0; padding:24px; background:#1f2024; color:#f1f1f1; font:14px/1.6 Arial, sans-serif; }
+      .wrap { max-width: 900px; margin: 0 auto; }
+      textarea { width:100%; min-height:90px; background:#2b2c33; color:#f1f1f1; border:1px solid #555; border-radius:4px; padding:8px; box-sizing:border-box; }
+      input[type=number]{ width:56px; background:#2b2c33; color:#f1f1f1; border:1px solid #555; border-radius:4px; padding:3px 5px; }
+      button { padding:9px 14px; background:#5c0d11; color:#fff; border:0; border-radius:6px; cursor:pointer; font-weight:bold; }
+      button:disabled{ opacity:.5; cursor:default; }
+      table { width:100%; border-collapse:collapse; margin-top:16px; font-size:13px; }
+      th,td { text-align:left; padding:6px 8px; border-bottom:1px solid #333; }
+      .bar{ height:8px; background:#111; border-radius:4px; overflow:hidden; } .fill{ height:100%; background:#4a90d9; width:0; }
+      .ok{color:#7ed17e;} .err{color:#f08a8a;} .warn{color:#e0b877;} .hidden{display:none;}
+    </style>
+  </head>
+  <body><div class="wrap">
+    <h1>EH Bulk Downloader</h1>
+    <div class="row"><label>Search / gallery URLs (one per line):</label><textarea id="urls" placeholder="https://e-hentai.org/?f_search=Paperhero&f_sft=on&f_sfu=on&f_sfl=on"></textarea></div>
+    <div class="row">
+      <label><input type="checkbox" id="orig" checked /> Prefer originals</label> &nbsp;
+      <label>Images/parallel <input type="number" id="conc" min="1" max="8" value="4" /></label> &nbsp;
+      <label>Galleries/parallel <input type="number" id="gconc" min="1" max="4" value="2" /></label> &nbsp;
+      <label>Delay ms <input type="number" id="delay" min="0" max="5000" value="400" /></label>
+    </div>
+    <div class="row">
+      <button id="pick">Pick output folder</button>
+      <button id="start" disabled>Start</button>
+      <button id="pause" class="hidden">Pause</button>
+      <button id="resume" class="hidden">Resume</button>
+      <button id="cancel" class="hidden">Cancel</button>
+    </div>
+    <p id="status"></p>
+    <table id="grid"><thead><tr><th>#</th><th>Gallery</th><th>Route</th><th>Status</th><th>Progress</th></tr></thead><tbody id="rows"></tbody></table>
+  </div><script type="module" src="manager.js"></script></body>
+</html>
