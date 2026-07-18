@@ -1,7 +1,7 @@
 import { collectGalleriesFromSearch } from "./search.js";
 import { resolveGallery, collectImageLinks, fetchImage, pool, pageNumOf, sanitize } from "./scrape.js";
 import { ZipStreamWriter } from "./zip-stream.js";
-import { pickOutputDir, zipSinkFor, fileExists, persistDir, restoreDir, ensurePermission, hasPermission, renameFile } from "./output.js";
+import { pickOutputDir, zipSinkFor, fileExists, persistDir, restoreDir, ensurePermission, renameFile } from "./output.js";
 import { Job } from "./queue.js";
 import { isBlocked, on509, manualPause, resume as gateResume, cancel as gateCancel } from "./pause.js";
 import { getGalleryTorrents, pickBestTorrent } from "./torrents.js";
