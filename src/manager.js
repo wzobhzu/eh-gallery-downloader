@@ -68,10 +68,16 @@ $("start").onclick = async () => {
   } // else: resume the boot-loaded job as-is
 
   usedNames.clear();
+  for (const gg of job.data.galleries) if (gg.zipName) usedNames.add(gg.zipName);  // reserve already-assigned names so a distinct gallery can never resolve to a sibling's ZIP
   renderRows();
   $("start").classList.add("hidden"); showPauseBtn(); $("cancel").classList.remove("hidden");
   await pool(await job.pending(), job.data.settings.galleryConcurrency, (g)=>processGallery(g), ()=>{}, state, 0);
-  setStatus(state.userCancelled ? "Cancelled — partial galleries left as .part; press Start to resume." : "All galleries processed.", state.userCancelled ? "err" : "ok");
+  const failedCount = job.data.galleries.filter((g)=>g.status === "failed").length;
+  setStatus(
+    state.userCancelled ? "Cancelled — partial galleries left as .part; press Start to resume."
+      : (failedCount ? `Done — ${failedCount} gallery(ies) failed; press Start to retry them.` : "All galleries processed."),
+    (state.userCancelled || failedCount) ? "err" : "ok"
+  );
   $("pause").classList.add("hidden"); $("resume").classList.add("hidden"); $("cancel").classList.add("hidden"); $("start").classList.remove("hidden");
 };
 
@@ -80,7 +86,10 @@ async function processGallery(g) {
   await routeGallery(g);
   if (g.route === "torrent") {
     const ok = await torrentRoute(g);
-    if (!ok && !state.userCancelled) { await job.setRoute(g.gid, "image"); updateRow(g); await imageRoute(g); }
+    if (!ok && !state.userCancelled) {
+      try { if (g._torrent) await qb.deleteTorrent(g._torrent.infohash, true); } catch { /* best-effort cleanup */ }
+      await job.setRoute(g.gid, "image"); updateRow(g); await imageRoute(g);
+    }
   } else {
     await imageRoute(g);
   }
@@ -141,9 +150,10 @@ async function imageRoute(g) {
   const { galleryUrl } = await resolveGallery(g.galleryUrl);
   const res = await collectImageLinks(galleryUrl, state, ()=>{});
   const links = res.links;
-  const zipName = sanitizeUnique(res.title || g.gid, g.gid);
-  if (await fileExists(dir, zipName)) { await job.setStatus(g.gid, "done", { title: res.title }); updateRow(g); return; }
-  await job.setStatus(g.gid, "downloading", { title: res.title, image: { total: links.length, savedPages: [], failedPages: [] } });
+  let zipName = g.zipName;
+  if (!zipName) zipName = sanitizeUnique(res.title || g.gid, g.gid);
+  if (await fileExists(dir, zipName)) { await job.setStatus(g.gid, "done", { title: res.title, zipName }); updateRow(g); return; }
+  await job.setStatus(g.gid, "downloading", { title: res.title, zipName, image: { total: links.length, savedPages: [], failedPages: [] } });
   updateRow(g);
 
   // Stream to a .part name; rename to the final name only on full success so a
@@ -161,8 +171,9 @@ async function imageRoute(g) {
       if (state.userCancelled) return;
       const img = await fetchOneImage(sUrl);
       const page = pageNumOf(sUrl);
-      chain = chain.then(()=>zip.add(`${String(page).padStart(width,"0")}.${img.ext}`, img.data));
-      await chain;
+      const p = chain.then(()=>zip.add(`${String(page).padStart(width,"0")}.${img.ext}`, img.data));
+      chain = p.catch(()=>{});   // keep the chain alive: one write failure must not skip later adds or block close()
+      await p;                    // this worker still sees its own write failure, so the page stays in remaining for retry
       remaining.delete(sUrl); saved++;
       updateRowProgress(g, saved, links.length);
     }, ()=>{}, state, job.data.settings.delayMs);
@@ -189,7 +200,7 @@ $("cancel").onclick=()=>{ gateCancel(state, pauseDeps); setStatus("Cancelling...
 (async function boot(){
   await ingestInbox();
   dir = await restoreDir();
-  if (dir && await hasPermission(dir)) $("start").disabled=false;
+  if (dir) $("start").disabled=false;   // enable even if permission reverted to 'prompt' after a restart; Start's click drives requestPermission
   qbOk = await qb.available();
   const qbMsg = qbOk ? "" : " qBittorrent not reachable (127.0.0.1:8080) — torrent route disabled; image fetch used for all galleries.";
   const j = new Job(storage);

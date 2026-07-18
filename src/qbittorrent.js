@@ -33,6 +33,14 @@ export class QbClient {
     return r.json();
   }
 
+  async deleteTorrent(hashes, deleteFiles = true) {
+    const fd = new FormData();
+    fd.append("hashes", Array.isArray(hashes) ? hashes.join("|") : hashes);
+    fd.append("deleteFiles", String(deleteFiles));
+    const r = await fetch(`${this.base}/api/v2/torrents/delete`, { method: "POST", body: fd });
+    if (!r.ok) throw new Error(`qB delete HTTP ${r.status}`);
+  }
+
   stalled(t) {
     return t && t.state === "stalledDL" && (t.num_seeds || 0) === 0;
   }
