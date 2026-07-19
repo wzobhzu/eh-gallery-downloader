@@ -191,10 +191,11 @@ function runImageWorkers(queue, moreComing, concurrency) {
 async function monitorTorrents(torrentGids, imageWork) {
   if (!torrentGids.size) return;
   const pending = new Set(torrentGids);
-  const lastProg = {}, stallSince = {}, seedlessSince = {}, missCount = {}, rechecked = {};
+  const lastProg = {}, stallSince = {}, seedlessSince = {}, missCount = {}, rechecked = {}, recheckedAt = {};
   const NO_PROGRESS_MS = 5 * 60 * 1000;
   const SEEDLESS_MS = 3 * 60 * 1000;
   const MAX_MISSES = 24; // ~2 min at 5s: torrent no longer in qBittorrent at all
+  const RECHECK_GRACE_MS = 30 * 1000; // let qBittorrent enter/finish its re-hash before rerouting
   const toImage = async (gid, g, del) => {
     if (del) { try { await qb.deleteTorrent(g._torrent.infohash, true); } catch { /* best effort */ } }
     await job.setRoute(gid, "image"); updateRow(g); imageWork.push(g); pending.delete(gid);
@@ -221,8 +222,9 @@ async function monitorTorrents(torrentGids, imageWork) {
         // eventually drop the gid from `pending`, or the monitor never returns and the image
         // workers spin on an empty queue forever.
         if (await folderHasFile(dir, torrentFolder(g))) { await job.setStatus(gid, "done"); updateRow(g); pending.delete(gid); continue; }
-        if (!rechecked[gid]) { rechecked[gid] = true; try { await qb.recheck(g._torrent.infohash); } catch { /* best effort */ } continue; }
+        if (!rechecked[gid]) { rechecked[gid] = true; recheckedAt[gid] = Date.now(); try { await qb.recheck(g._torrent.infohash); } catch { /* best effort */ } continue; }
         if (/checking/i.test(info.state || "")) continue;   // re-hash still running; don't reroute mid-check
+        if (Date.now() - (recheckedAt[gid] || 0) < RECHECK_GRACE_MS) continue;   // give qB time to enter the re-hash
         await toImage(gid, g, true);
         continue;
       }
