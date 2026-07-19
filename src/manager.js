@@ -216,9 +216,14 @@ async function monitorTorrents(torrentGids, imageWork) {
         // Disk-verify done-gate: "done" only if the .zip qBittorrent reports as complete is
         // actually on disk. A complete-in-qB-but-missing-on-disk torrent (deleted externally /
         // stale dedup entry) is rechecked once to force qB to re-hash (drops below 100%) and
-        // re-download if seeds exist; if it stays seedless the stall grace below re-routes to image.
+        // re-download if seeds exist. If qB still claims complete after that re-hash, the
+        // torrent cannot produce data, so fall back to image fetch. Every branch here must
+        // eventually drop the gid from `pending`, or the monitor never returns and the image
+        // workers spin on an empty queue forever.
         if (await folderHasFile(dir, torrentFolder(g))) { await job.setStatus(gid, "done"); updateRow(g); pending.delete(gid); continue; }
-        if (!rechecked[gid]) { rechecked[gid] = true; try { await qb.recheck(g._torrent.infohash); } catch { /* best effort */ } }
+        if (!rechecked[gid]) { rechecked[gid] = true; try { await qb.recheck(g._torrent.infohash); } catch { /* best effort */ } continue; }
+        if (/checking/i.test(info.state || "")) continue;   // re-hash still running; don't reroute mid-check
+        await toImage(gid, g, true);
         continue;
       }
       if (prog !== lastProg[gid]) { lastProg[gid] = prog; stallSince[gid] = Date.now(); }
