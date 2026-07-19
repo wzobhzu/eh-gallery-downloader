@@ -10,8 +10,13 @@
 
 const SLINK = /\/s\/[0-9a-f]+\/\d+-\d+/;
 
+// Every network wait is abort-bounded. A stalled connection that is accepted but never
+// answered would otherwise park an image worker forever, and runImageWorkers' Promise.all
+// then never resolves — the run becomes unkillable because no flag can break the await.
+const NET_TIMEOUT_MS = 60000; // large original images are slow but must not hang a worker forever
+
 export async function fetchDoc(url) {
-  const res = await fetch(url, { credentials: "include" });
+  const res = await fetch(url, { credentials: "include", signal: AbortSignal.timeout(NET_TIMEOUT_MS) });
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
   return new DOMParser().parseFromString(await res.text(), "text/html");
 }
@@ -100,7 +105,16 @@ function extFor(url, contentType) {
 }
 
 async function tryBytes(url, state) {
-  const r = await fetch(url, { credentials: "include" });
+  // A timeout/network error returns null, exactly like a bad response: the fallback
+  // ladder in fetchImage moves to the next tier and, if every tier fails, the caller
+  // throws "no usable image", which imageRoute's backoff rounds retry. Deliberately
+  // does NOT touch state.quotaHit — a timeout is not the 509 quota path.
+  let r;
+  try {
+    r = await fetch(url, { credentials: "include", signal: AbortSignal.timeout(NET_TIMEOUT_MS) });
+  } catch {
+    return null;
+  }
   // 509 = e-hentai image/bandwidth limit reached. Stop the whole job instead of
   // hammering, which only prolongs the temporary block.
   if (r.status === 509) {
@@ -111,7 +125,8 @@ async function tryBytes(url, state) {
   if (!r.ok) return null;
   const ct = r.headers.get("content-type") || "";
   if (!ct.startsWith("image/")) return null; // quota page / HTML -> reject
-  const buf = new Uint8Array(await r.arrayBuffer());
+  let buf;
+  try { buf = new Uint8Array(await r.arrayBuffer()); } catch { return null; } // body stalled mid-stream
   return buf.length ? { data: buf, ext: extFor(r.url || url, ct) } : null;
 }
 
