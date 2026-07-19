@@ -1,6 +1,6 @@
 import { collectGalleriesFromSearch } from "./search.js";
 import { resolveGallery, collectImageLinks, fetchImage, pool, pageNumOf, sanitize, fetchDoc } from "./scrape.js";
-import { pickOutputDir, saveBytes, persistDir, restoreDir, ensurePermission, subDir, existingBasenames } from "./output.js";
+import { pickOutputDir, saveBytes, persistDir, restoreDir, ensurePermission, subDir, existingBasenames, folderHasFile } from "./output.js";
 import { Job } from "./queue.js";
 import { isBlocked, on509, manualPause, resume as gateResume, cancel as gateCancel } from "./pause.js";
 import { getGalleryTorrents, pickBestTorrent } from "./torrents.js";
@@ -87,7 +87,13 @@ $("start").onclick = async () => {
     const known = g.torrent && g.torrent.infohash ? qbByHash[g.torrent.infohash] : null;
     if (known) {
       g._torrent = g.torrent;
-      if ((known.progress || 0) >= 1) { await job.setStatus(g.gid, "done"); }
+      if ((known.progress || 0) >= 1) {
+        // Disk-verify gate: "done" only if the .zip qBittorrent reports as complete is
+        // actually on disk. If it was deleted externally, recheck forces qB to re-hash
+        // (drops below 100%) and re-download if seeds exist, instead of silently skipping.
+        if (await folderHasFile(dir, torrentFolder(g))) { await job.setStatus(g.gid, "done"); }
+        else { try { await qb.recheck(g.torrent.infohash); } catch { /* best effort */ } await job.setStatus(g.gid, "downloading"); torrentGids.add(g.gid); }
+      }
       else { await job.setStatus(g.gid, "downloading"); torrentGids.add(g.gid); }
       updateRow(g); return;
     }
@@ -144,14 +150,17 @@ async function addTorrent(g) {
       title = ((doc.querySelector("#gn") || doc.querySelector("#gj") || {}).textContent || "").trim() || g.gid;
     } catch { title = g.gid; }
   }
-  await job.setStatus(g.gid, "downloading", { title }); updateRow(g);
+  // Persist the exact subfolder qBittorrent saves into (reuse a prior run's name to avoid
+  // drift) so the reconcile can disk-verify the .zip actually landed.
+  const folderName = g.folderName || sanitizeUnique(title || g.gid, g.gid);
+  await job.setStatus(g.gid, "downloading", { title, folderName }); updateRow(g);
   const t = g._torrent;
   let bytes;
   try { bytes = new Uint8Array(await (await fetch(t.torrentUrl, { credentials: "include" })).arrayBuffer()); }
   catch { return false; }
   const raw = job.data.settings.qbSavePath;
   const baseDir = raw ? raw.replace(/[\\/]+$/, "") + (raw.includes("\\") ? "\\" : "/") : "";
-  const savepath = baseDir + sanitize(title || g.gid);
+  const savepath = baseDir + folderName;
   try { await qb.addTorrent(bytes, { savepath, category: "eh-bulk" }); }
   catch { return false; }
   return true;
@@ -269,6 +278,10 @@ async function imageRoute(g) {
 const usedNames = new Set();
 function sanitizeUnique(titleOrGid, gid){ const base = sanitize(titleOrGid); let name = base; if (usedNames.has(name)) name = `${base} [${gid}]`; usedNames.add(name); return name; }
 
+// Subfolder qBittorrent saved this gallery's .zip into: the persisted folderName, or (for
+// jobs persisted before folderName was tracked) the sanitized title, matching the savepath.
+const torrentFolder = (g) => g.folderName || sanitize(g.title || g.gid);
+
 function renderRows(){ $("rows").innerHTML=""; job.data.galleries.forEach((g,i)=>{ const tr=document.createElement("tr"); tr.id="r"+g.gid; tr.innerHTML=`<td>${i+1}</td><td>${g.gid}</td><td class="route"></td><td class="st"></td><td><div class="bar"><div class="fill"></div></div></td>`; $("rows").appendChild(tr); updateRow(g); }); }
 function updateRow(g){ const tr=$("r"+g.gid); if(!tr) return; tr.querySelector(".route").textContent=g.route; tr.querySelector(".st").textContent=g.status; }
 function updateRowProgress(g, saved, total){ const tr=$("r"+g.gid); if(tr) tr.querySelector(".fill").style.width=Math.round(saved/total*100)+"%"; }
@@ -294,7 +307,10 @@ $("cancel").onclick=()=>{ gateCancel(state, pauseDeps); setStatus("Cancelling...
         for (const g of job.data.galleries) {
           if (g.route === "torrent" && g.torrent && g.torrent.infohash) {
             const info = byHash[g.torrent.infohash];
-            if (info && (info.progress || 0) >= 1 && g.status !== "done") await job.setStatus(g.gid, "done");
+            // Disk-verify gate: mark "done" only if qB reports 100% AND the .zip is on disk.
+            // A complete-in-qB-but-missing-on-disk torrent is left as-is so Start re-processes
+            // it (Start's Phase 1 issues the qB recheck). Boot stays side-effect-light.
+            if (info && (info.progress || 0) >= 1 && g.status !== "done" && await folderHasFile(dir, torrentFolder(g))) await job.setStatus(g.gid, "done");
           }
         }
       } catch { /* ignore */ }

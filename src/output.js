@@ -89,3 +89,13 @@ export async function existingBasenames(subHandle) {
   }
   return set;
 }
+
+// True if the per-gallery subfolder exists and contains at least one file — used to
+// verify a torrent qBittorrent reports as complete actually landed on disk.
+export async function folderHasFile(dirHandle, name) {
+  try {
+    const sub = await dirHandle.getDirectoryHandle(name, { create: false });
+    for await (const entry of sub.values()) if (entry.kind === "file") return true;
+    return false;
+  } catch { return false; }
+}

@@ -41,6 +41,13 @@ export class QbClient {
     if (!r.ok) throw new Error(`qB delete HTTP ${r.status}`);
   }
 
+  async recheck(hashes) {
+    const fd = new FormData();
+    fd.append("hashes", Array.isArray(hashes) ? hashes.join("|") : hashes);
+    const r = await fetch(`${this.base}/api/v2/torrents/recheck`, { method: "POST", body: fd });
+    if (!r.ok) throw new Error(`qB recheck HTTP ${r.status}`);
+  }
+
   stalled(t) {
     return t && t.state === "stalledDL" && (t.num_seeds || 0) === 0;
   }
