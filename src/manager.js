@@ -1,5 +1,5 @@
 import { collectGalleriesFromSearch } from "./search.js";
-import { resolveGallery, collectImageLinks, fetchImage, pool, pageNumOf, sanitize, fetchDoc } from "./scrape.js";
+import { resolveGallery, collectImageLinks, fetchImage, pool, pageNumOf, sanitize, fetchDoc, NET_TIMEOUT_MS } from "./scrape.js";
 import { pickOutputDir, saveBytes, persistDir, restoreDir, ensurePermission, subDir, existingBasenames, folderHasFile } from "./output.js";
 import { Job } from "./queue.js";
 import { isBlocked, on509, manualPause, resume as gateResume, cancel as gateCancel } from "./pause.js";
@@ -156,7 +156,7 @@ async function addTorrent(g) {
   await job.setStatus(g.gid, "downloading", { title, folderName }); updateRow(g);
   const t = g._torrent;
   let bytes;
-  try { bytes = new Uint8Array(await (await fetch(t.torrentUrl, { credentials: "include" })).arrayBuffer()); }
+  try { bytes = new Uint8Array(await (await fetch(t.torrentUrl, { credentials: "include", signal: AbortSignal.timeout(NET_TIMEOUT_MS) })).arrayBuffer()); }
   catch { return false; }
   const raw = job.data.settings.qbSavePath;
   const baseDir = raw ? raw.replace(/[\\/]+$/, "") + (raw.includes("\\") ? "\\" : "/") : "";
@@ -192,9 +192,11 @@ async function monitorTorrents(torrentGids, imageWork) {
   if (!torrentGids.size) return;
   const pending = new Set(torrentGids);
   const lastProg = {}, stallSince = {}, seedlessSince = {}, missCount = {}, rechecked = {}, recheckedAt = {};
+  let infoFailures = 0;
   const NO_PROGRESS_MS = 5 * 60 * 1000;
   const SEEDLESS_MS = 3 * 60 * 1000;
   const MAX_MISSES = 24; // ~2 min at 5s: torrent no longer in qBittorrent at all
+  const MAX_INFO_FAILURES = 24; // ~2 min at 5s: qBittorrent is unreachable, stop waiting on it
   const RECHECK_GRACE_MS = 30 * 1000; // let qBittorrent enter/finish its re-hash before rerouting
   const toImage = async (gid, g, del) => {
     if (del) { try { await qb.deleteTorrent(g._torrent.infohash, true); } catch { /* best effort */ } }
@@ -203,7 +205,17 @@ async function monitorTorrents(torrentGids, imageWork) {
   while (pending.size && !state.userCancelled) {
     await sleep(5000);
     let infos;
-    try { infos = await qb.info(); } catch { continue; }
+    try { infos = await qb.info(); infoFailures = 0; }
+    catch {
+      // qBittorrent unreachable for too long: stop waiting on it and let the image route
+      // finish the job, or `pending` never drains and the monitor never returns. No
+      // deleteTorrent here (del=false) — that call would only time out repeatedly too.
+      if (++infoFailures >= MAX_INFO_FAILURES) {
+        for (const gid of [...pending]) { const g = job.get(gid); if (g) await toImage(gid, g, false); else pending.delete(gid); }
+        return;
+      }
+      continue;
+    }
     const byHash = {};
     for (const i of infos) byHash[i.hash] = i;
     for (const gid of [...pending]) {

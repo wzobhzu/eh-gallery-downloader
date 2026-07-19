@@ -13,7 +13,7 @@ const SLINK = /\/s\/[0-9a-f]+\/\d+-\d+/;
 // Every network wait is abort-bounded. A stalled connection that is accepted but never
 // answered would otherwise park an image worker forever, and runImageWorkers' Promise.all
 // then never resolves — the run becomes unkillable because no flag can break the await.
-const NET_TIMEOUT_MS = 60000; // large original images are slow but must not hang a worker forever
+export const NET_TIMEOUT_MS = 60000; // large original images are slow but must not hang a worker forever
 
 export async function fetchDoc(url) {
   const res = await fetch(url, { credentials: "include", signal: AbortSignal.timeout(NET_TIMEOUT_MS) });
