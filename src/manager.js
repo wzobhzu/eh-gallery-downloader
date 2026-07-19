@@ -1,6 +1,6 @@
 import { collectGalleriesFromSearch } from "./search.js";
 import { resolveGallery, collectImageLinks, fetchImage, pool, pageNumOf, sanitize, fetchDoc } from "./scrape.js";
-import { pickOutputDir, saveBytes, fileExists, persistDir, restoreDir, ensurePermission, subDir, existingBasenames } from "./output.js";
+import { pickOutputDir, saveBytes, persistDir, restoreDir, ensurePermission, subDir, existingBasenames } from "./output.js";
 import { Job } from "./queue.js";
 import { isBlocked, on509, manualPause, resume as gateResume, cancel as gateCancel } from "./pause.js";
 import { getGalleryTorrents, pickBestTorrent } from "./torrents.js";
@@ -109,7 +109,7 @@ $("start").onclick = async () => {
 
   const failedCount = job.data.galleries.filter((g)=>g.status === "failed").length;
   setStatus(
-    state.userCancelled ? "Cancelled — partial galleries left as .part; press Start to resume."
+    state.userCancelled ? "Cancelled — partly-downloaded folders kept; press Start to resume only what's missing."
       : (failedCount ? `Done — ${failedCount} gallery(ies) failed; press Start to retry them.` : "All galleries processed."),
     (state.userCancelled || failedCount) ? "err" : "ok"
   );
