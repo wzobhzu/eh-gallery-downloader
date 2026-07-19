@@ -191,7 +191,7 @@ function runImageWorkers(queue, moreComing, concurrency) {
 async function monitorTorrents(torrentGids, imageWork) {
   if (!torrentGids.size) return;
   const pending = new Set(torrentGids);
-  const lastProg = {}, stallSince = {}, seedlessSince = {}, missCount = {};
+  const lastProg = {}, stallSince = {}, seedlessSince = {}, missCount = {}, rechecked = {};
   const NO_PROGRESS_MS = 5 * 60 * 1000;
   const SEEDLESS_MS = 3 * 60 * 1000;
   const MAX_MISSES = 24; // ~2 min at 5s: torrent no longer in qBittorrent at all
@@ -212,7 +212,15 @@ async function monitorTorrents(torrentGids, imageWork) {
       missCount[gid] = 0;
       const prog = info.progress || 0;
       updateRowProgress(g, Math.round(prog * 100), 100);
-      if (prog >= 1) { await job.setStatus(gid, "done"); updateRow(g); pending.delete(gid); continue; }
+      if (prog >= 1) {
+        // Disk-verify done-gate: "done" only if the .zip qBittorrent reports as complete is
+        // actually on disk. A complete-in-qB-but-missing-on-disk torrent (deleted externally /
+        // stale dedup entry) is rechecked once to force qB to re-hash (drops below 100%) and
+        // re-download if seeds exist; if it stays seedless the stall grace below re-routes to image.
+        if (await folderHasFile(dir, torrentFolder(g))) { await job.setStatus(gid, "done"); updateRow(g); pending.delete(gid); continue; }
+        if (!rechecked[gid]) { rechecked[gid] = true; try { await qb.recheck(g._torrent.infohash); } catch { /* best effort */ } }
+        continue;
+      }
       if (prog !== lastProg[gid]) { lastProg[gid] = prog; stallSince[gid] = Date.now(); }
       if ((info.num_seeds || 0) === 0 && info.state === "stalledDL") { if (!seedlessSince[gid]) seedlessSince[gid] = Date.now(); }
       else seedlessSince[gid] = 0;
