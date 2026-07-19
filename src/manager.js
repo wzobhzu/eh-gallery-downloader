@@ -78,6 +78,7 @@ $("start").onclick = async () => {
 
   // Phase 1: route every gallery. Torrent -> add to qBittorrent NOW and move on (non-blocking);
   // image (or torrent that couldn't be added) -> the image queue.
+  qbOk = await qb.available();   // re-probe here: don't leave the torrent route disabled if qBittorrent came up after boot
   let qbByHash = {};
   if (qbOk) { try { for (const i of await qb.info()) qbByHash[i.hash] = i; } catch { /* ignore */ } }
   await pool(pend, Math.max(1, job.data.settings.galleryConcurrency), async (g) => {
@@ -256,7 +257,11 @@ async function imageRoute(g) {
       updateRowProgress(g, saved, links.length);
     }, ()=>{}, state, job.data.settings.delayMs);
   }
-  await job.setStatus(g.gid, remaining.size ? "failed" : "done");
+  // Verify against disk: only "done" if the files are actually present. Guards against
+  // marking done when links were empty, all fetches failed, or writes silently failed
+  // (any of which would otherwise leave an empty folder falsely marked done).
+  const onDisk = (await existingBasenames(sub)).size;
+  await job.setStatus(g.gid, (links.length > 0 && onDisk >= links.length) ? "done" : "failed");
   updateRow(g);
 }
 
