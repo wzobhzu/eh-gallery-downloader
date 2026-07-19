@@ -10,9 +10,9 @@ same image-fetch engine as a fallback — see [Bulk downloading](#bulk-downloadi
 ## Features
 
 - A **bulk manager** tab can queue many galleries at once — from pasted search
-  URLs or `/g/` links — and download each to its own ZIP unattended, using a
-  live-seeded torrent when available and falling back to image fetch
-  otherwise. See [Bulk downloading](#bulk-downloading).
+  URLs or `/g/` links — and download each to its own `<title>/` folder
+  unattended, using a live-seeded torrent when available and falling back to
+  image fetch otherwise. See [Bulk downloading](#bulk-downloading).
 
 - On a gallery (`/g/`) or image (`/s/`) page, a small button opens a dedicated
   **downloader tab**. The tab runs independently — you can keep browsing or
@@ -75,8 +75,8 @@ Paste one or more URLs into the manager, one per line:
 - **`/g/` gallery URLs** — queued directly.
 
 Pick an output folder once (a single folder-picker dialog); every gallery is
-then written as its own `<title>.zip` inside it, with no further per-file
-dialogs. The manager tab is a persistent dashboard — a table lists every
+then written into its own `<title>/` folder inside it, with no further
+per-file dialogs. The manager tab is a persistent dashboard — a table lists every
 queued gallery with its route (torrent/image), status, and a progress bar,
 updating live as galleries complete.
 
@@ -96,14 +96,15 @@ to the next gallery, so image-route galleries and every torrent progress
 concurrently. A torrent with no seeders (or that makes no progress for
 ~5 minutes) is automatically pulled from qBittorrent and falls back to image
 fetch. Otherwise — qBittorrent isn't reachable, or the gallery has no
-live-seeded torrent — the manager falls back to the same fetch-and-stream-ZIP
-path used for single-gallery downloads. This guarantees every gallery
-eventually completes by one route or the other.
+live-seeded torrent — the manager falls back to the same per-image fetch
+route used for every image gallery, saving loose files into a `<title>/`
+folder. This guarantees every gallery eventually completes by one route or
+the other.
 
 Set the **"Torrent save folder"** field to the same folder you pick below for
-ZIPs to keep every gallery together — torrent galleries save there under a
-`<title>` subfolder, matching the ZIP naming. Leave it blank to use
-qBittorrent's own default save path.
+image galleries to keep every gallery together — torrent galleries save
+there under a `<title>` subfolder, matching the image-route folder naming.
+Leave it blank to use qBittorrent's own default save path.
 
 #### One-time qBittorrent setup
 
@@ -118,10 +119,11 @@ In qBittorrent: **Options -> Web UI**:
 `http://127.0.0.1:8080/*` is already declared in the extension's
 `host_permissions`; nothing else to configure on the extension side. By
 default torrent downloads land in qBittorrent's own save path (separate from
-the ZIP folder). Set the manager's **Torrent save folder** field to the same
-folder you pick for ZIPs to keep every gallery together — torrent galleries
-are then saved there under a `<title>` subfolder. If qBittorrent isn't
-reachable, the manager just uses image fetch for every gallery.
+the image-route output folder). Set the manager's **Torrent save folder**
+field to the same folder you pick for image galleries to keep every gallery
+together — torrent galleries are then saved there under a `<title>`
+subfolder. If qBittorrent isn't reachable, the manager just uses image fetch
+for every gallery.
 
 ### Handling the image-view limit (HTTP 509)
 
@@ -133,14 +135,16 @@ available.
 
 ### Resuming an interrupted run
 
-The queue (which galleries are pending/done/failed) and each gallery's
-assigned ZIP name are persisted, and the chosen output folder is remembered
-(its write permission may need re-granting after a browser restart). Each
-gallery's ZIP is written under a `.part` name and renamed to its final name
-only once fully written, so an interrupted gallery's partial ZIP is never
-mistaken for a completed one — press **Start** again to pick up where it left
-off. Requires Chromium 111+ (uses `FileSystemFileHandle.move` for the atomic
-rename).
+Image galleries now save as a `<title>/` folder of numbered image files (not
+a ZIP), giving true per-image resume — re-running only fetches the pages
+still missing from that folder. Torrent galleries save under a matching
+`<title>` subfolder too, so both routes now produce uniform `<title>/`
+folders. On load or Start, the manager reconciles against ground truth
+instead of trusting its persisted state alone: it checks qBittorrent (by the
+persisted torrent infohash) for torrent galleries and the files already on
+disk for image galleries, so reloading the extension never re-downloads or
+duplicates what's already done — press **Start** to resume only what's
+missing.
 
 ### Honest limits
 
@@ -166,8 +170,8 @@ rename).
 | `src/search.js` | Parses e-hentai search/listing pages and walks the `next=` cursor pagination to collect every gallery a search matches. |
 | `src/torrents.js` | Parses a gallery's torrent-list page and picks the best live-seeded torrent (highest seed count). |
 | `src/qbittorrent.js` | Thin client for qBittorrent's local Web API (`127.0.0.1:8080`): checks reachability, adds a torrent, polls its progress, deletes it if the manager falls back to image fetch. |
-| `src/output.js` | Bulk-mode output handling: the one-time folder picker, a per-gallery ZIP sink, and persisting/restoring the folder handle (IndexedDB) so a resumed session can reuse it without re-picking. |
-| `src/queue.js` | The persisted bulk job model — the list of queued galleries and each one's route/status/assigned ZIP name — so a run can resume after the tab or browser closes. |
+| `src/output.js` | Bulk-mode output handling: the one-time folder picker, per-gallery `<title>/` subfolder creation, loose-file saves, listing a folder's existing basenames (for per-image resume), and persisting/restoring the folder handle (IndexedDB) so a resumed session can reuse it without re-picking. |
+| `src/queue.js` | The persisted bulk job model — the list of queued galleries and each one's route/status/assigned folder name/torrent infohash — so a run can resume after the tab or browser closes. |
 | `src/pause.js` | The shared pause gate for bulk mode: unifies manual Pause and the automatic HTTP 509 cooldown so every in-flight worker checks the same state. |
 | `src/scrape.js` | Shared scraping + image-fetch logic (pagination walk, `/s` parsing, fallback ladder, content-warning bypass, ad/nav-link filter, 509 detection, throttle). |
 | `src/zip-stream.js` | Streaming ZIP writer (STORE + CRC32) — writes each entry to a sink as bytes arrive, never buffering the whole archive. |

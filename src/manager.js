@@ -1,7 +1,6 @@
 import { collectGalleriesFromSearch } from "./search.js";
 import { resolveGallery, collectImageLinks, fetchImage, pool, pageNumOf, sanitize, fetchDoc } from "./scrape.js";
-import { ZipStreamWriter } from "./zip-stream.js";
-import { pickOutputDir, zipSinkFor, fileExists, persistDir, restoreDir, ensurePermission, renameFile } from "./output.js";
+import { pickOutputDir, saveBytes, fileExists, persistDir, restoreDir, ensurePermission, subDir, existingBasenames } from "./output.js";
 import { Job } from "./queue.js";
 import { isBlocked, on509, manualPause, resume as gateResume, cancel as gateCancel } from "./pause.js";
 import { getGalleryTorrents, pickBestTorrent } from "./torrents.js";
@@ -69,7 +68,7 @@ $("start").onclick = async () => {
   } // else: resume the boot-loaded job as-is
 
   usedNames.clear();
-  for (const gg of job.data.galleries) if (gg.zipName) usedNames.add(gg.zipName);
+  for (const gg of job.data.galleries) if (gg.folderName) usedNames.add(gg.folderName);
   renderRows();
   $("start").classList.add("hidden"); showPauseBtn(); $("cancel").classList.remove("hidden");
 
@@ -79,8 +78,18 @@ $("start").onclick = async () => {
 
   // Phase 1: route every gallery. Torrent -> add to qBittorrent NOW and move on (non-blocking);
   // image (or torrent that couldn't be added) -> the image queue.
+  let qbByHash = {};
+  if (qbOk) { try { for (const i of await qb.info()) qbByHash[i.hash] = i; } catch { /* ignore */ } }
   await pool(pend, Math.max(1, job.data.settings.galleryConcurrency), async (g) => {
     if (state.userCancelled) return;
+    // Reconcile: a torrent already in qBittorrent (persisted infohash) is never re-added.
+    const known = g.torrent && g.torrent.infohash ? qbByHash[g.torrent.infohash] : null;
+    if (known) {
+      g._torrent = g.torrent;
+      if ((known.progress || 0) >= 1) { await job.setStatus(g.gid, "done"); }
+      else { await job.setStatus(g.gid, "downloading"); torrentGids.add(g.gid); }
+      updateRow(g); return;
+    }
     await routeGallery(g);
     if (g.route === "torrent") {
       const ok = await addTorrent(g);
@@ -112,7 +121,11 @@ async function routeGallery(g) {
   if (qbOk) {
     try {
       const best = pickBestTorrent(await getGalleryTorrents(g.galleryUrl));
-      if (best) { await job.setRoute(g.gid, "torrent"); g._torrent = best; updateRow(g); return; }
+      if (best) {
+        g._torrent = best;
+        await job.setStatus(g.gid, g.status, { route: "torrent", torrent: { infohash: best.infohash, torrentUrl: best.torrentUrl } });
+        updateRow(g); return;
+      }
     } catch { /* fall through to image */ }
   }
   await job.setRoute(g.gid, "image"); updateRow(g);
@@ -212,49 +225,44 @@ async function fetchOneImage(sUrl) {
   }
 }
 
+// Image route: download each page as a loose file into <outdir>/<title>/, skipping any
+// page already present (true per-image resume across reloads). No streaming ZIP.
 async function imageRoute(g) {
   await job.setStatus(g.gid, "scanning"); updateRow(g);
   const { galleryUrl } = await resolveGallery(g.galleryUrl);
   const res = await collectImageLinks(galleryUrl, state, ()=>{});
   const links = res.links;
-  let zipName = g.zipName;
-  if (!zipName) zipName = sanitizeUnique(res.title || g.gid, g.gid);
-  if (await fileExists(dir, zipName)) { await job.setStatus(g.gid, "done", { title: res.title, zipName }); updateRow(g); return; }
-  await job.setStatus(g.gid, "downloading", { title: res.title, zipName, image: { total: links.length, savedPages: [], failedPages: [] } });
+  const title = res.title || g.gid;
+  const folderName = sanitizeUnique(title, g.gid);
+  await job.setStatus(g.gid, "downloading", { title, folderName, image: { total: links.length } });
   updateRow(g);
 
-  // Stream to a .part name; rename to the final name only on full success so a
-  // truncated ZIP is never mistaken for a completed gallery on resume.
-  const partName = zipName + ".part";
-  const sink = await zipSinkFor(dir, partName);
-  const zip = new ZipStreamWriter(sink.write);
+  const sub = await subDir(dir, folderName);
   const width = String(links.length).length;
-  let saved = 0; let chain = Promise.resolve();
-  const remaining = new Set(links);
+  const have = await existingBasenames(sub);           // page numbers already downloaded
+  const remaining = new Set(links.filter((sUrl) => !have.has(String(pageNumOf(sUrl)).padStart(width, "0"))));
+  let saved = links.length - remaining.size;
+  updateRowProgress(g, saved, links.length);
+
   const backoffs = [2000, 8000, 30000];
   for (let round = 0; round < 4 && remaining.size && !state.userCancelled; round++) {
-    if (round > 0) await sleep(backoffs[Math.min(round-1, backoffs.length-1)]);
+    if (round > 0) await sleep(backoffs[Math.min(round - 1, backoffs.length - 1)]);
     await pool([...remaining], job.data.settings.imgConcurrency, async (sUrl) => {
       if (state.userCancelled) return;
       const img = await fetchOneImage(sUrl);
-      const page = pageNumOf(sUrl);
-      const p = chain.then(()=>zip.add(`${String(page).padStart(width,"0")}.${img.ext}`, img.data));
-      chain = p.catch(()=>{});   // keep the chain alive: one write failure must not skip later adds or block close()
-      await p;                    // this worker still sees its own write failure, so the page stays in remaining for retry
+      const name = String(pageNumOf(sUrl)).padStart(width, "0") + "." + img.ext;
+      await saveBytes(sub, name, img.data);              // loose file; resumable
       remaining.delete(sUrl); saved++;
       updateRowProgress(g, saved, links.length);
     }, ()=>{}, state, job.data.settings.delayMs);
   }
-  await chain; await zip.close(); await sink.done();
-  await job.markImageProgress(g.gid, [...links].filter((l)=>!remaining.has(l)).map(pageNumOf), [...remaining].map(pageNumOf));
-  if (remaining.size === 0 && !state.userCancelled) { await renameFile(dir, partName, zipName); await job.setStatus(g.gid, "done"); }
-  else { await job.setStatus(g.gid, state.userCancelled ? "cancelled" : "failed"); } // .part remains; resume redoes this gallery
+  await job.setStatus(g.gid, remaining.size ? "failed" : "done");
   updateRow(g);
 }
 
-// Deterministic per-gallery name: title, disambiguated by gid on a title collision.
+// Deterministic per-gallery folder name: title, disambiguated by gid on a title collision.
 const usedNames = new Set();
-function sanitizeUnique(titleOrGid, gid){ const base = sanitize(titleOrGid); let name = base + ".zip"; if (usedNames.has(name)) name = `${base} [${gid}].zip`; usedNames.add(name); return name; }
+function sanitizeUnique(titleOrGid, gid){ const base = sanitize(titleOrGid); let name = base; if (usedNames.has(name)) name = `${base} [${gid}]`; usedNames.add(name); return name; }
 
 function renderRows(){ $("rows").innerHTML=""; job.data.galleries.forEach((g,i)=>{ const tr=document.createElement("tr"); tr.id="r"+g.gid; tr.innerHTML=`<td>${i+1}</td><td>${g.gid}</td><td class="route"></td><td class="st"></td><td><div class="bar"><div class="fill"></div></div></td>`; $("rows").appendChild(tr); updateRow(g); }); }
 function updateRow(g){ const tr=$("r"+g.gid); if(!tr) return; tr.querySelector(".route").textContent=g.route; tr.querySelector(".st").textContent=g.status; }
@@ -272,6 +280,22 @@ $("cancel").onclick=()=>{ gateCancel(state, pauseDeps); setStatus("Cancelling...
   qbOk = await qb.available();
   const qbMsg = qbOk ? "" : " qBittorrent not reachable (127.0.0.1:8080) — torrent route disabled; image fetch used for all galleries.";
   const j = new Job(storage);
-  if (await j.load()){ job=j; renderRows(); setStatus("Previous job loaded — press Start to resume pending galleries (folder permission may re-prompt)." + qbMsg, qbOk ? "" : "warn"); }
+  if (await j.load()){
+    job = j;
+    qbOk = await qb.available();  // ensure qbOk set before reconcile (may duplicate the earlier line; harmless)
+    if (qbOk) {
+      try {
+        const byHash = {}; for (const i of await qb.info()) byHash[i.hash] = i;
+        for (const g of job.data.galleries) {
+          if (g.route === "torrent" && g.torrent && g.torrent.infohash) {
+            const info = byHash[g.torrent.infohash];
+            if (info && (info.progress || 0) >= 1 && g.status !== "done") await job.setStatus(g.gid, "done");
+          }
+        }
+      } catch { /* ignore */ }
+    }
+    renderRows();
+    setStatus("Previous job loaded and reconciled with qBittorrent — press Start to resume only what's missing." + (qbOk ? "" : " (qBittorrent not reachable)"), qbOk ? "" : "warn");
+  }
   else if (qbMsg) setStatus(qbMsg.trim(), "warn");
 })();

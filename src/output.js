@@ -77,3 +77,15 @@ export async function hasPermission(dirHandle) {
   if (!dirHandle) return false;
   return (await dirHandle.queryPermission({ mode: "readwrite" })) === "granted";
 }
+
+// Get/create a per-gallery subfolder handle for loose-image output.
+export async function subDir(dirHandle, name) { return dirHandle.getDirectoryHandle(name, { create: true }); }
+
+// Basenames (page number, extension stripped) of files already in a folder — for per-image resume.
+export async function existingBasenames(subHandle) {
+  const set = new Set();
+  for await (const entry of subHandle.values()) {
+    if (entry.kind === "file") set.add(entry.name.replace(/\.[a-z0-9]+$/i, ""));
+  }
+  return set;
+}
